@@ -46,12 +46,14 @@ jobs:
           fi
           ls -la clang.tar.gz
           tar -xzf clang.tar.gz
-          CLANG_BIN=$(find /opt/tc -path '*/bin/clang' -type f | head -n1)
-          [ -n "$CLANG_BIN" ] || { echo "no clang in archive"; find /opt/tc -maxdepth 2; exit 1; }
+          CLANG_BIN=$(find -L /opt/tc -maxdepth 2 -name clang -type f | head -n1)
+          [ -n "$CLANG_BIN" ] || { echo "no clang in archive"; ls -la /opt/tc; ls -la /opt/tc/bin | head -n 30; exit 1; }
           CLANG_DIR=$(dirname "$(dirname "$CLANG_BIN")")
-          echo "CLANG_DIR=$CLANG_DIR" >> "$GITHUB_ENV"
+          export PATH="$CLANG_DIR/bin:$PATH"
           echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
-          "$CLANG_DIR/bin/clang" --version | head -n2
+          echo "CLANG_DIR=$CLANG_DIR" >> "$GITHUB_ENV"
+          clang --version | head -n2
+          command -v aarch64-linux-gnu-gcc arm-linux-gnueabi-gcc
 
       - name: Configure
         run: |
