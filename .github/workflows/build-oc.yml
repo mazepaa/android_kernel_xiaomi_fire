@@ -20,16 +20,35 @@ jobs:
           sudo rm -rf /usr/share/dotnet /opt/ghc "$AGENT_TOOLSDIRECTORY" /usr/local/lib/android/sdk/ndk
           df -h /
 
-      - name: Toolchain (ZyC clang 12.0.1, same as the shipped fire-18-11-oc build)
+      - name: Toolchain
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends bc bison flex libssl-dev libelf-dev \
             cpio zip unzip curl rsync gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
           mkdir -p /opt/tc && cd /opt/tc
-          curl -fsSL -o clang.tar.gz \
-            https://github.com/ZyCromerZ/Clang/releases/download/12.0.1-20230207-release/Clang-12.0.1-20230207.tar.gz
+
+          # ZyC clang 12.0.1 — the tree shipping fire-18-11-oc reports
+          # "ZyC clang version 12.0.1", so keep the same major version.
+          ZYC_TAG=12.0.1-20230207-release
+          ZYC_FILE=Clang-12.0.1-20230207.tar.gz
+          if ! curl -fsSL -o clang.tar.gz \
+                "https://github.com/ZyCromerZ/Clang/releases/download/$ZYC_TAG/$ZYC_FILE"; then
+            echo "release asset download failed, falling back to the API asset URL"
+            URL=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                     "https://api.github.com/repos/ZyCromerZ/Clang/releases/tags/$ZYC_TAG" \
+                  | grep -o '"browser_download_url": *"[^"]*Clang-12\.0\.1[^"]*\.tar\.gz"' \
+                  | head -n1 | sed 's/.*"\(https[^"]*\)"/\1/')
+            echo "asset: $URL"
+            curl -fsSL -L -o clang.tar.gz "$URL"
+          fi
+          ls -la clang.tar.gz
           tar -xzf clang.tar.gz
-          CLANG_DIR=$(dirname "$(dirname "$(find /opt/tc -path '*/bin/clang' | head -n1)")")
+          CLANG_BIN=$(find /opt/tc -path '*/bin/clang' -type f | head -n1)
+          [ -n "$CLANG_BIN" ] || { echo "no clang in archive"; find /opt/tc -maxdepth 2; exit 1; }
+          CLANG_DIR=$(dirname "$(dirname "$CLANG_BIN")")
           echo "CLANG_DIR=$CLANG_DIR" >> "$GITHUB_ENV"
           echo "$CLANG_DIR/bin" >> "$GITHUB_PATH"
           "$CLANG_DIR/bin/clang" --version | head -n2
