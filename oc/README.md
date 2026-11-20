@@ -2,37 +2,35 @@
 
 Base: `deryardi73/android_kernel_xiaomi_fire@inferno-new` (`21b15644`).
 
+## What the live device says (root, `/proc`)
+
+```
+MT_CPU_DVFS_LL  2100000 108625 | 1800000 98625 | 1625000 91125 | ... | 500000 63000
+MT_CPU_DVFS_L   2300000 112625 | 2050000 109750 | 1900000 104250 | ... | 500000 63000
+MT_CPU_DVFS_CCI 1477000 104125 | 1263000 98750 | 1049000 85500 | ... | 500000 63000
+dvfsp change_flag = 0   (DTS tables NOT applied)
+/proc/gpufreq: [0] 1000000 @ 87500 -- stock top is 1.0 GHz, already 87.5 mV higher
+               than the 95 mV in the header, g_segment_id = 5
+```
+
+That ladder is **proTbl / proTbl_v7** (`CPU_LEVEL_2`), not `FY_G75Tbl` and not
+`FY_6768Tbl`. So this branch patches `proTbl` + `proTbl_v7`.
+
 ## What is changed
 
 | File | Change |
 |---|---|
 | `drivers/gpu/mediatek/gpufreq/mt6768/mtk_gpufreq_core.h` | GPU top OPP **1 150 000 kHz @ 100 000 (1 000 mV)**; VSRAM chain shifted one slot so every existing step keeps its voltage |
-| `drivers/misc/mediatek/base/power/cpufreq_v1/src/mach/mt6768/mtk_cpufreq_opp_table.h` | **`FY_G75Tbl`** (CPU_LEVEL_6) — 16-slot ladder: little top 1800, extra steps 1230/1111 MHz, **floor 350 MHz**; big top 2000 with extra steps 2202/2050/1900/1850/1800, floor 350; CCI floor 350 |
-| `drivers/misc/mediatek/base/power/cpufreq_v1/src/mtk_cpufreq_main.c` | log-only helper: prints when an OPP hits the `MAX_VPROC_VOLT` (1120 mV) ceiling. **Cap not raised** — no voltage change, no behaviour change |
-| `arch/arm64/configs/ksu_defconfig` | prepended to the build config by the workflow (KernelSU + SUSFS) |
+| `mtk_cpufreq_opp_pv_table.h` → `proTbl` and `proTbl_v7` | 16-slot ladders: little `1800 … 1230 … 1111 … 350`, big `2300, 2202, 2050, 1900, 1850, 1800, … 350`, CCI `1477 … 350` |
+| `drivers/misc/mediatek/base/power/cpufreq_v1/src/mtk_cpufreq_main.c` | log-only helper: prints when an OPP hits the `MAX_VPROC_VOLT` (1120 mV) ceiling. **Cap not raised.** |
 
-`NR_FREQ` is 16 in this tree — 16 OPPs per cluster is a hardware/SSPM limit, so
-"more steps above 1 GHz" always replaces existing slots, it never adds a 17th.
+`NR_FREQ` is 16 — the SSPM/MCUPM PVT copy loop takes exactly 16 OPPs, so the
+350 MHz floor replaces the lowest slot rather than adding a 17th.
 
 ## Build
 
-`.github/workflows/build-oc.yml` → Actions → *Build inferno-oc kernel* → **Run workflow**
-(or push to this branch). Artifacts: `Image.gz`, `Image.gz-dtb` if produced, `dtb.img`.
+`.github/workflows/build-oc.yml` → Actions → *Build inferno-oc kernel* →
+**Run workflow**. Artifacts: `Image.gz` (and `Image.gz-dtb` / `dtb.img` if the
+tree produces them). The workflow is a starting point — check the toolchain
+step before using it.
 
-## Flash
-
-Boot.img / AnyKernel3 is not produced by this branch yet — use the recovery or
-`fastboot boot dist/Image` **only after** repacking, because the raw `Image` alone
-is not a boot image.
-
-Before flashing check the CPU level the kernel picks:
-
-```
-adb shell dumpsys telephony.registry | grep -i sku   # or: getprop ro.boot.hardware.sku
-```
-
-Xiaomi fire reports `androidboot.product.hardware.sku=hcesim`. The live DT on the
-stock-18-11 kernel shows `dvfsp change_flag = 0`, so the DTS tables are not applied
-and the running ladder (2100 / 2300 MHz) does not match `FY_G75Tbl` either — the
-`CPU_LEVEL` mapping in `_mt_cpufreq_get_cpu_level()` must be confirmed against the
-dump `cat /proc/cpufreq/cpufreq_opp_dump` **with root** before trusting this branch.
