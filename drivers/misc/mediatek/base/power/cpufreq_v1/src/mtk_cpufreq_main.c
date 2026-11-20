@@ -17,6 +17,16 @@
 #include "mtk_cpufreq_hybrid.h"
 #include "mtk_cpufreq_opp_table.h"
 
+
+#ifdef SUPPORT_VOLT_HW_AUTO_TRACK
+/* OC: log when an OPP exceeds the PMIC ceiling instead of staying silent */
+static inline void vf_volt_cap_note(int line, unsigned int volt)
+{
+	if (volt >= 115000)
+		tag_pr_info("@%s():%d volt %d uV is capped to MAX_VPROC_VOLT\n",
+			__func__, line, volt * 10);
+}
+#endif
 #define DCM_ENABLE 1
 
 #define met_tag_oneshot(a, b, c) do {} while (0)
@@ -386,6 +396,8 @@ int set_cur_volt_wrapper(struct mt_cpu_dvfs *p, unsigned int volt)
 	old_vsram = cur_vsram;
 
 	volt = MIN(volt, MAX_VPROC_VOLT);
+
+	vf_volt_cap_note(__LINE__, volt);
 
 	if (volt > old_vproc)
 		notify_cpu_volt_sampler(p->id, volt, VOLT_UP, VOLT_PRECHANGE);

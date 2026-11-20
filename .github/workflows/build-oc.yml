@@ -1,0 +1,81 @@
+name: Build inferno-oc kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      gpu_khz:
+        description: 'GPU top frequency (kHz)'
+        default: '1150000'
+        required: false
+      gpu_volt:
+        description: 'GPU top voltage (mV x100)'
+        default: '100000'
+        required: false
+  push:
+    branches: [ inferno-oc ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+              bc bison flex libssl-dev libelf-dev cpio python3 zip unzip curl rsync
+          # ZyC clang 12.0.1 matches the build that shipped in fire-18-11-oc.zip
+          mkdir -p ~/toolchain && cd ~/toolchain
+          curl -fsSL -o clang.tar.xz \
+            https://github.com/ZyCromerZ/Clang/releases/download/12.0.1-release/Clang-12.0.1-20220728.tar.xz
+          tar -xJf clang.tar.xz
+          CLANG_DIR=$(find "$PWD" -maxdepth 2 -type d -name 'bin' | head -n1 | xargs dirname)
+          echo "CLANG_DIR=$CLANG_DIR" >> "$GITHUB_ENV"
+          echo "PATH=$CLANG_DIR/bin:$PATH" >> "$GITHUB_ENV"
+          # cross gcc for the arm32 pieces the MTK tree still needs
+          sudo curl -fsSL -o /usr/local/bin/gcc-aarch64 \
+            https://github.com/ZyCromerZ/Clang/releases/download/12.0.1-release/placeholder || true
+          "$CLANG_DIR/bin/clang" --version
+
+      - name: Configure
+        run: |
+          make O=out ARCH=arm64 fire_defconfig
+          cat arch/arm64/configs/ksu_defconfig >> out/arch/arm64/configs/.config
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Build kernel
+        run: |
+          make -j"$(nproc)" O=out ARCH=arm64 \
+            CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump READELF=llvm-readelf STRIP=llvm-strip \
+            LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+      - name: Collect artifacts
+        run: |
+          ls -la out/arch/arm64/boot/
+          mkdir -p dist
+          cp out/arch/arm64/boot/Image.gz      dist/Image.gz || true
+          cp out/arch/arm64/boot/Image.gz-dtb  dist/Image.gz-dtb || true
+          cp out/arch/arm64/boot/dtb.img       dist/dtb.img || true
+          cp out/arch/arm64/boot/dtb          dist/dtb || true
+          ls -la dist
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: inferno-oc-${{ github.sha }}
+          path: dist/
+          retention-days: 14
